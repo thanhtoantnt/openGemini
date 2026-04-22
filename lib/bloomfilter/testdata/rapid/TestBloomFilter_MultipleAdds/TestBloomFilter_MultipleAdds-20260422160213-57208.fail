@@ -1,0 +1,16 @@
+# 2026/04/22 16:02:13.445442 [TestBloomFilter_MultipleAdds] [rapid] draw version: 0x3
+# 2026/04/22 16:02:13.445446 [TestBloomFilter_MultipleAdds] [rapid] draw size: 8
+# 2026/04/22 16:02:13.445448 [TestBloomFilter_MultipleAdds] [rapid] draw numHashes: 1
+# 2026/04/22 16:02:13.445452 [TestBloomFilter_MultipleAdds] [rapid] draw hash: 0x400000000000
+# 
+v0.4.8#8686087748264279003
+0x38e38e38e38e4
+0x3
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x1e083305a49553
+0x400000000000
