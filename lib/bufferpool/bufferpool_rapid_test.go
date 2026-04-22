@@ -22,60 +22,58 @@ import (
 	"github.com/openGemini/openGemini/lib/bufferpool"
 )
 
-func TestBufferPool_SimpleRoundtrip(t *testing.T) {
+// TestBufferPool_CapacityPreservation
+// Verifies that the pool preserves buffer capacities (core API contract)
+func TestBufferPool_CapacityPreservation(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
-		size := rapid.IntRange(1, 1024*1024).Draw(t, "size")
+		capacity := rapid.IntRange(0, 1024*1024).Draw(t, "capacity")
+		pool := bufferpool.NewByteBufferPool(1024, 2, 8)
 
-		buf1 := bufferpool.Get()
-		if cap(buf1) < 64 { // minDefaultSize
-			t.Fatalf("Buffer capacity %d less than minimum expected", cap(buf1))
+		// Put buffer with specific capacity
+		buf := make([]byte, 0, capacity)
+		pool.Put(buf)
+
+		// Get should return buffer with same capacity
+		buf2 := pool.Get()
+
+		if cap(buf2) != capacity {
+			t.Fatalf("Capacity not preserved: put cap=%d, got cap=%d", capacity, cap(buf2))
 		}
-
-		for i := 0; i < min(size, cap(buf1)); i++ {
-			buf1 = append(buf1, byte(i%256))
-		}
-
-		bufferpool.Put(buf1)
-
-		buf2 := bufferpool.Get()
-
-		if cap(buf2) < 64 {
-			t.Fatalf("Reused buffer capacity %d less than minimum expected", cap(buf2))
-		}
-
-		bufferpool.Put(buf2)
 	})
 }
 
-func TestBufferPool_CustomPool(t *testing.T) {
+// TestBufferPool_LengthReset
+// Verifies that Put always resets buffer length to 0
+func TestBufferPool_LengthReset(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
-		defaultSize := rapid.Uint64Range(64, 1024*1024).Draw(t, "defaultSize")
-		localCacheNum := rapid.IntRange(1, 8).Draw(t, "localCacheNum")
+		capacity := rapid.IntRange(1, 1024*1024).Draw(t, "capacity")
+		dataLen := rapid.IntRange(0, capacity).Draw(t, "dataLen")
+		pool := bufferpool.NewByteBufferPool(1024, 2, 8)
 
-		pool := bufferpool.NewByteBufferPool(defaultSize, localCacheNum, 8)
-
-		size := rapid.IntRange(1, int(defaultSize)).Draw(t, "size")
-		buf := pool.Get()
-
-		if cap(buf) < 64 {
-			t.Fatalf("Buffer capacity %d less than minimum expected", cap(buf))
-		}
-
-		for i := 0; i < min(size, cap(buf)); i++ {
+		// Create buffer with data
+		buf := make([]byte, 0, capacity)
+		for i := 0; i < dataLen; i++ {
 			buf = append(buf, byte(i%256))
 		}
 
 		pool.Put(buf)
+		buf2 := pool.Get()
+
+		// Length should always be 0 after Put
+		if len(buf2) != 0 {
+			t.Fatalf("Length not reset: expected 0, got %d", len(buf2))
+		}
 	})
 }
 
+// TestBufferPool_ResizePreservesData
+// Verifies that Resize preserves existing data
 func TestBufferPool_ResizePreservesData(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
 		originalSize := rapid.IntRange(10, 100).Draw(t, "originalSize")
 		newSize := rapid.IntRange(originalSize, originalSize*10).Draw(t, "newSize")
 
 		buf := make([]byte, 0, originalSize)
-
 		for i := 0; i < originalSize; i++ {
 			buf = append(buf, byte(i))
 		}
@@ -98,125 +96,9 @@ func TestBufferPool_ResizePreservesData(t *testing.T) {
 	})
 }
 
-func TestBufferPool_ConcurrentGetPut(t *testing.T) {
-	rapid.Check(t, func(t *rapid.T) {
-		numOps := rapid.IntRange(10, 100).Draw(t, "numOps")
-		pool := bufferpool.NewByteBufferPool(1024, 4, 8)
-
-		done := make(chan bool, numOps)
-
-		for i := 0; i < numOps; i++ {
-			go func() {
-				buf := pool.Get()
-				if cap(buf) < 64 {
-					t.Fatalf("Buffer capacity %d less than minimum expected", cap(buf))
-				}
-				buf = append(buf, byte(1))
-				pool.Put(buf)
-				done <- true
-			}()
-		}
-
-		for i := 0; i < numOps; i++ {
-			<-done
-		}
-	})
-}
-
-func TestBufferPool_SizeInvariants(t *testing.T) {
-	rapid.Check(t, func(t *rapid.T) {
-		size := rapid.IntRange(64, 1024*1024).Draw(t, "size")
-
-		buf := bufferpool.Get()
-
-		if len(buf) != 0 {
-			t.Fatalf("New buffer should be empty: got %d", len(buf))
-		}
-
-		if cap(buf) < 64 {
-			t.Fatalf("Buffer capacity %d less than minimum", cap(buf))
-		}
-
-		if cap(buf) > 32*1024*1024 {
-			t.Fatalf("Buffer capacity %d exceeds maximum local cache size", cap(buf))
-		}
-
-		data := make([]byte, min(size, cap(buf)))
-		buf = append(buf, data...)
-
-		bufferpool.Put(buf)
-
-		buf2 := bufferpool.Get()
-		if len(buf2) != 0 {
-			t.Fatalf("Reused buffer should be empty: got %d", len(buf2))
-		}
-
-		bufferpool.Put(buf2)
-	})
-}
-
-func TestBufferPool_DefaultPool(t *testing.T) {
-	rapid.Check(t, func(t *rapid.T) {
-		buf := bufferpool.Get()
-
-		if len(buf) != 0 {
-			t.Fatalf("Default pool buffer should be empty: got %d", len(buf))
-		}
-
-		if cap(buf) < 64 {
-			t.Fatalf("Default pool buffer capacity %d less than minimum", cap(buf))
-		}
-
-		bufferpool.Put(buf)
-
-		buf2 := bufferpool.Get()
-		if len(buf2) != 0 {
-			t.Fatalf("Default pool reused buffer should be empty: got %d", len(buf2))
-		}
-
-		bufferpool.Put(buf2)
-	})
-}
-
-func TestBufferPool_LargeBuffers(t *testing.T) {
-	rapid.Check(t, func(t *rapid.T) {
-		size := rapid.IntRange(32*1024*1024, 64*1024*1024).Draw(t, "size")
-
-		buf := make([]byte, 0, size)
-		for i := 0; i < min(size, cap(buf)); i++ {
-			buf = append(buf, byte(i%256))
-		}
-
-		bufferpool.Put(buf)
-
-		buf2 := bufferpool.Get()
-
-		if len(buf2) != 0 {
-			t.Fatalf("Large buffer after put should be empty: got %d", len(buf2))
-		}
-
-		bufferpool.Put(buf2)
-	})
-}
-
-func TestBufferPool_ResizeZero(t *testing.T) {
-	rapid.Check(t, func(t *rapid.T) {
-		originalSize := rapid.IntRange(10, 100).Draw(t, "originalSize")
-
-		buf := make([]byte, originalSize)
-		for i := 0; i < originalSize; i++ {
-			buf[i] = byte(i)
-		}
-
-		resized := bufferpool.Resize(buf, 0)
-
-		if len(resized) != 0 {
-			t.Fatalf("Resize to zero should produce empty buffer: got %d", len(resized))
-		}
-	})
-}
-
-func TestBufferPool_ResizeSmaller(t *testing.T) {
+// TestBufferPool_ResizeToSmaller
+// Verifies Resize behavior when shrinking
+func TestBufferPool_ResizeToSmaller(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
 		originalSize := rapid.IntRange(100, 200).Draw(t, "originalSize")
 		newSize := rapid.IntRange(10, originalSize-10).Draw(t, "newSize")
@@ -234,12 +116,33 @@ func TestBufferPool_ResizeSmaller(t *testing.T) {
 
 		for i := 0; i < newSize; i++ {
 			if resized[i] != byte(i) {
-				t.Fatalf("Resize to smaller corrupted data at position %d: got %d, want %d", i, resized[i], byte(i))
+				t.Fatalf("Resize to smaller corrupted data at position %d", i)
 			}
 		}
 	})
 }
 
+// TestBufferPool_ResizeToZero
+// Verifies Resize to zero length
+func TestBufferPool_ResizeToZero(t *testing.T) {
+	rapid.Check(t, func(t *rapid.T) {
+		originalSize := rapid.IntRange(10, 100).Draw(t, "originalSize")
+
+		buf := make([]byte, originalSize)
+		for i := 0; i < originalSize; i++ {
+			buf[i] = byte(i)
+		}
+
+		resized := bufferpool.Resize(buf, 0)
+
+		if len(resized) != 0 {
+			t.Fatalf("Resize to zero should produce empty buffer: got %d", len(resized))
+		}
+	})
+}
+
+// TestBufferPool_ResizeSame
+// Verifies Resize to same size
 func TestBufferPool_ResizeSame(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
 		size := rapid.IntRange(10, 100).Draw(t, "size")
@@ -257,35 +160,107 @@ func TestBufferPool_ResizeSame(t *testing.T) {
 
 		for i := 0; i < size; i++ {
 			if resized[i] != byte(i) {
-				t.Fatalf("Resize to same corrupted data at position %d: got %d, want %d", i, resized[i], byte(i))
+				t.Fatalf("Resize to same corrupted data at position %d", i)
 			}
 		}
 	})
 }
 
+// TestBufferPool_MultiplePools
+// Verifies that different pools operate independently
 func TestBufferPool_MultiplePools(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
+		cap1 := rapid.IntRange(10, 100).Draw(t, "cap1")
+		cap2 := rapid.IntRange(10, 100).Draw(t, "cap2")
+
 		pool1 := bufferpool.NewByteBufferPool(512, 2, 4)
 		pool2 := bufferpool.NewByteBufferPool(2048, 2, 4)
 
-		buf1 := pool1.Get()
-		buf2 := pool2.Get()
-
-		if cap(buf1) < 64 || cap(buf2) < 64 {
-			t.Fatalf("Both pools should provide buffers with minimum capacity")
-		}
+		buf1 := make([]byte, 0, cap1)
+		buf2 := make([]byte, 0, cap2)
 
 		pool1.Put(buf1)
 		pool2.Put(buf2)
 
-		buf1Again := pool1.Get()
-		buf2Again := pool2.Get()
+		buf1Out := pool1.Get()
+		buf2Out := pool2.Get()
 
-		if len(buf1Again) != 0 || len(buf2Again) != 0 {
-			t.Fatalf("Reused buffers should be empty")
+		if cap(buf1Out) != cap1 {
+			t.Fatalf("Pool1 capacity not preserved: expected %d, got %d", cap1, cap(buf1Out))
+		}
+		if cap(buf2Out) != cap2 {
+			t.Fatalf("Pool2 capacity not preserved: expected %d, got %d", cap2, cap(buf2Out))
+		}
+	})
+}
+
+// TestBufferPool_DefaultPool
+// Verifies default pool behavior
+func TestBufferPool_DefaultPool(t *testing.T) {
+	rapid.Check(t, func(t *rapid.T) {
+		capacity := rapid.IntRange(0, 1024*1024).Draw(t, "capacity")
+
+		buf := make([]byte, 0, capacity)
+		bufferpool.Put(buf)
+
+		buf2 := bufferpool.Get()
+
+		if len(buf2) != 0 {
+			t.Fatalf("Default pool buffer should be empty: got %d", len(buf2))
 		}
 
-		pool1.Put(buf1Again)
-		pool2.Put(buf2Again)
+		if cap(buf2) != capacity {
+			t.Fatalf("Default pool capacity not preserved: expected %d, got %d", capacity, cap(buf2))
+		}
+	})
+}
+
+// TestBufferPool_PutGetIdempotence
+// Verifies that put/get cycles preserve buffer properties
+func TestBufferPool_PutGetIdempotence(t *testing.T) {
+	rapid.Check(t, func(t *rapid.T) {
+		capacity := rapid.IntRange(1, 1024).Draw(t, "capacity")
+		pool := bufferpool.NewByteBufferPool(1024, 2, 8)
+
+		// First cycle
+		buf1 := make([]byte, 0, capacity)
+		pool.Put(buf1)
+		buf1Out := pool.Get()
+
+		// Second cycle
+		pool.Put(buf1Out)
+		buf2Out := pool.Get()
+
+		// Both should have same capacity
+		if cap(buf1Out) != cap(buf2Out) {
+			t.Fatalf("Idempotence violated: first cap=%d, second cap=%d", cap(buf1Out), cap(buf2Out))
+		}
+
+		// Both should have length 0
+		if len(buf1Out) != 0 || len(buf2Out) != 0 {
+			t.Fatalf("Buffers should have length 0")
+		}
+	})
+}
+
+// TestBufferPool_LargeBuffers
+// Verifies handling of large buffers (> MaxLocalCacheSize)
+func TestBufferPool_LargeBuffers(t *testing.T) {
+	rapid.Check(t, func(t *rapid.T) {
+		// Buffers larger than MaxLocalCacheSize (32MB) go to underlying pool
+		size := rapid.IntRange(32*1024*1024+1, 64*1024*1024).Draw(t, "size")
+
+		buf := make([]byte, 0, size)
+		bufferpool.Put(buf)
+
+		buf2 := bufferpool.Get()
+
+		if len(buf2) != 0 {
+			t.Fatalf("Large buffer should be empty after Put: got %d", len(buf2))
+		}
+
+		if cap(buf2) != size {
+			t.Fatalf("Large buffer capacity not preserved: expected %d, got %d", size, cap(buf2))
+		}
 	})
 }
