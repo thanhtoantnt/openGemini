@@ -1,0 +1,15 @@
+# 2026/04/22 22:47:52.866158 [TestSetModInt64AndADD_NegativeB] [rapid] draw a: 0
+# 2026/04/22 22:47:52.866167 [TestSetModInt64AndADD_NegativeB] [rapid] draw b: -2
+# 2026/04/22 22:47:52.866172 [TestSetModInt64AndADD_NegativeB] [rapid] draw mod: 1
+# 2026/04/22 22:47:52.866173 [TestSetModInt64AndADD_NegativeB] SetMod(0, -2, 1) = -1; want [0, 1) — negative b not handled
+# 
+v0.4.8#8183309660170995434
+0x0
+0x0
+0x0
+0x0
+0x0
+0x1
+0x0
+0x0
+0x0

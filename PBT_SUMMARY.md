@@ -2,167 +2,107 @@
 
 ## Overview
 
-**Date**: April 22, 2026  
-**Method**: Property-based testing using rapid library  
-**Packages Tested**: 5  
-**Bugs Found**: 1 confirmed (BloomFilter size validation)  
-**Tests Created**: 50+ property-based tests
+**Date**: April 22, 2026
+**Method**: Property-based testing using `pgregory.net/rapid` library
+**Packages Tested**: 11
+**Bugs Confirmed**: 4 (including 1 from previous session)
+**Tests Created**: 100+ property-based tests
 
-## Test Results
+## Final Test Results
 
 ```
-✓ lib/bufferpool     - All tests PASS (capacity preservation is by design)
-✓ lib/bloomfilter    - All tests PASS (boundary bug documented)
-✓ lib/strings        - All tests PASS
-✓ lib/consistenthash - All tests PASS
-✓ lib/binarysearch   - All tests PASS
+FAIL  lib/stringinterner  — Race condition in StringDict.LoadIndex
+ok    lib/stream          — All tests PASS (NaN inconsistency confirmed by code analysis)
+FAIL  lib/atomic          — NaN corruption + negative b bugs
+ok    lib/errno           — All tests PASS
+ok    lib/memory          — All tests PASS (unit mismatch confirmed by code analysis)
+ok    lib/rand            — All tests PASS
+ok    lib/bufferpool      — All tests PASS
+ok    lib/bloomfilter     — All tests PASS (boundary bug confirmed in prior session)
+ok    lib/strings         — All tests PASS
+ok    lib/consistenthash  — All tests PASS
+ok    lib/binarysearch    — All tests PASS
 ```
 
-## Bugs Discovered
+## Confirmed Bugs
 
-### 1. BloomFilter: Missing Size Validation (CONFIRMED REAL BUG)
+### Bug 1: StringDict.LoadIndex Race Condition (HIGH)
+- **File**: `BUG_REPORT_STRINGINTERNER.md`
+- **Package**: `lib/stringinterner`
+- **Test**: `TestStringDict_ConcurrentDeterminism` (confirmed with `-race`)
+- **Root cause**: Missing double-check after lock + data race on shared slice
+- **Impact**: Concurrent goroutines get different indices for same key
+- **Production usage**: `app/ts-store/stream/tag_task.go:159`
 
-**Status**: REAL BUG - API Design Flaw  
-**Severity**: MEDIUM  
-**File**: `BUG_REPORT_BLOOMFILTER.md`
+### Bug 2: CompareAndSwapMax/MinFloat64 NaN Corruption (MEDIUM)
+- **File**: `BUG_REPORT_ATOMIC_NAN.md`
+- **Package**: `lib/atomic`
+- **Tests**: `TestCompareAndSwapMaxFloat64_NaNInput`, `TestCompareAndSwapMinFloat64_NaNInput`
+- **Root cause**: `math.Max(u, NaN)` returns NaN; NaN != u triggers CAS swap
+- **Impact**: Single NaN value permanently corrupts aggregate state
+- **Production usage**: `lib/stream/stream.go:72,74` (min/max aggregation)
 
-**Summary**: The bloomfilter API accepts any size but only specific sizes work correctly. Production uses correct sizes from constants, but the API doesn't validate or document this constraint.
+### Bug 3: Memory defaultMaxMem Unit Mismatch (MEDIUM)
+- **File**: `BUG_REPORT_MEMORY_UNIT_MISMATCH.md`
+- **Package**: `lib/memory`
+- **Test**: Code analysis (can't trigger without mocking gopsutil)
+- **Root cause**: `64 << 30` is bytes, but API returns kB → 1024x overestimate
+- **Impact**: Wrong cache/memory sizing on gopsutil failure paths
+- **Production usage**: `lib/config/store.go:384`, `lib/config/readcache.go:40`, `engine/immutable/hot.go:184`
 
-**Evidence**:
-- Tests only use specific sizes (32*1024+64 for V0, 256*1024+64 for V2/V3)
-- Production always uses `GetConstant(version).FilterDataMemSize`
-- The "+64" padding is intentional for the offset range
-- No validation or documentation of minimum size
+### Bug 4: BloomFilter Size Validation (MEDIUM) [Previous Session]
+- **File**: `BUG_REPORT_BLOOMFILTER.md`
+- **Package**: `lib/bloomfilter`
+- **Test**: `bloomfilter_boundary_test.go`
+- **Root cause**: API accepts any size but only specific sizes work correctly
+- **Impact**: Panics on invalid sizes
 
-**How to Reproduce**:
-```bash
-go test -v ./lib/bloomfilter/... -run "BoundaryPanic|OffByOnePanic"
-```
+## Dismissed (NOT Bugs)
 
-### 2. BufferPool: Capacity Preservation (NOT A BUG)
+| Finding | Package | Reason |
+|---------|---------|--------|
+| BufferPool capacity preservation | lib/bufferpool | Expected behavior (proven by existing test `TestBufferPool`) |
+| SetModInt64AndADD negative b | lib/atomic | Latent design flaw; production only uses b=±1 which works |
+| Rand Int63 upper bound | lib/rand | False alarm — test had wrong expected range |
 
-**Status**: Expected Behavior by Design  
-**File**: `BUG_REPORT_BUFFERPOOL.md` (updated to reflect correct analysis)
+## Test Files Created
 
-**Summary**: The buffer pool preserves buffer capacities by design. This was confirmed by existing tests that explicitly validate capacity preservation.
+| Package | File | Tests |
+|---------|------|-------|
+| lib/stringinterner | string_interner_rapid_test.go | 11 |
+| lib/stream | stream_rapid_test.go | 14 |
+| lib/atomic | atomic_rapid_test.go | 14 |
+| lib/errno | errno_rapid_test.go | 15 |
+| lib/memory | memory_rapid_test.go | 5 |
+| lib/rand | rand_rapid_test.go | 10 |
+| lib/bufferpool | bufferpool_rapid_test.go | 10 |
+| lib/bufferpool | behavior_verification_test.go | 10 |
+| lib/bloomfilter | bloomfilter_rapid_test.go | 11 |
+| lib/bloomfilter | bloomfilter_boundary_test.go | 8 |
+| lib/strings | strings_rapid_test.go | 17 |
+| lib/consistenthash | consistenthash_rapid_test.go | 8 |
+| lib/binarysearch | binarysearch_rapid_test.go | 9 |
 
-**Key Evidence**:
-- Existing test: `cap(b) != cap(b2)` - proves design intent
-- Multiple sizes tested and work correctly
-- Design supports any buffer size
+## Bug Report Files
 
-## Property-Based Tests Created
+| File | Bug | Severity |
+|------|-----|----------|
+| BUG_REPORT_STRINGINTERNER.md | StringDict race condition | HIGH |
+| BUG_REPORT_ATOMIC_NAN.md | NaN value corruption | MEDIUM |
+| BUG_REPORT_MEMORY_UNIT_MISMATCH.md | kB vs bytes mismatch | MEDIUM |
+| BUG_REPORT_BLOOMFILTER.md | Missing size validation | MEDIUM |
 
-### lib/bufferpool (behavior_verification_test.go)
-- Capacity preservation tests (zero, small, large)
-- Length reset on put
-- Multiple capacity preservation
-- Concurrent operations
-- Default pool behavior
-- Resize behavior
-- Multiple pools independence
-
-### lib/bufferpool (bufferpool_rapid_test.go)
-- Capacity preservation
-- Length reset
-- Resize preserves data
-- Resize to smaller/zero/same
-- Multiple pools
-- Default pool
-- Put/Get idempotence
-- Large buffers
-
-### lib/bloomfilter (bloomfilter_boundary_test.go)
-- Boundary panic tests (V0, V2, V3)
-- Hit panic
-- Minimum required size
-- Production sizes
-- Off-by-one panic
-
-### lib/bloomfilter (bloomfilter_rapid_test.go)
-- Add/Hit consistency
-- Multiple adds
-- Clear resets
-- LoadHit consistency
-- Data consistency
-- Add idempotence
-- Version differences
-- Hash distribution
-- GetBytesOffset range
-- Minimum size
-- All production sizes
-
-### lib/strings (strings_rapid_test.go)
-- UnionSlice: no duplicates, preserves elements, idempotence
-- SortIsEqual: sorted arrays, different lengths
-- ContainsInterface: string and non-string types
-- EqualInterface: string and non-string types
-
-### lib/consistenthash (consistenthash_rapid_test.go)
-- Get returns valid key
-- Consistency (same input → same output)
-- Empty map behavior
-- Add idempotence
-- Add more keys
-- Distribution
-- Replicas effect
-
-### lib/binarysearch (binarysearch_rapid_test.go)
-- UpperBound ascending: empty, single, sorted, all same, beyond range
-- LowerBound ascending: sorted
-- UpperBound descending: sorted
-- LowerBound descending: sorted
-
-## Files Created
-
-### Bug Reports
-- `BUG_REPORT_BUFFERPOOL.md` - Analysis of bufferpool behavior (NOT a bug)
-- `BUG_REPORT_BLOOMFILTER.md` - Confirmed bug report
-
-### Test Files
-- `lib/bufferpool/behavior_verification_test.go`
-- `lib/bufferpool/bufferpool_rapid_test.go`
-- `lib/bloomfilter/bloomfilter_boundary_test.go`
-- `lib/bloomfilter/bloomfilter_rapid_test.go`
-- `lib/strings/strings_rapid_test.go`
-- `lib/consistenthash/consistenthash_rapid_test.go`
-- `lib/binarysearch/binarysearch_rapid_test.go`
-
-### Documentation
-- `PROPERTY_BASED_TESTING.md` - Guide for property-based testing
-- `PROPERTY_BASED_TESTING_RESULTS.md` - Initial results (superseded)
-
-## How to Run Tests
+## How to Run
 
 ```bash
-# Run all property-based tests
-go test ./lib/bufferpool/... ./lib/bloomfilter/... ./lib/strings/... ./lib/consistenthash/... ./lib/binarysearch/...
+# Run all PBT tests
+go test ./lib/stringinterner/... ./lib/stream/... ./lib/atomic/... \
+       ./lib/errno/... ./lib/memory/... ./lib/rand/... \
+       ./lib/bufferpool/... ./lib/bloomfilter/... ./lib/strings/... \
+       ./lib/consistenthash/... ./lib/binarysearch/...
 
-# Run specific package
-go test -v ./lib/bloomfilter/... -run "Rapid"
-
-# Run bug reproduction tests
-go test -v ./lib/bloomfilter/... -run "BoundaryPanic|OffByOnePanic"
+# Reproduce specific bugs
+go test -race ./lib/stringinterner/... -run "TestStringDict_ConcurrentDeterminism"
+go test ./lib/atomic/... -run "NaNInput"
+go test ./lib/bloomfilter/... -run "BoundaryPanic"
 ```
-
-## Key Learnings
-
-1. **Read existing tests first** - They reveal design intent
-2. **Check production usage** - Shows how API is actually used
-3. **Distinguish bugs from features** - BufferPool capacity preservation is by design
-4. **Document findings** - Even "not a bug" findings are valuable
-
-## Recommendations
-
-1. **For BloomFilter**: Add size validation and documentation
-2. **For future PBT**: Continue adding tests for remaining packages
-3. **For CI/CD**: Integrate property-based tests into pipeline
-
-## Statistics
-
-- **Packages analyzed**: 15+
-- **Packages tested**: 5
-- **Property tests written**: 50+
-- **Test cases executed**: 5000+ (100 per test)
-- **Bugs found**: 1 confirmed
-- **False positives**: 1 (BufferPool - correctly identified as by design)
