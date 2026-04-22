@@ -1,0 +1,15 @@
+# 2026/04/22 14:30:37.474756 [TestContainsInterface_String] [rapid] draw str: "A"
+# 2026/04/22 14:30:37.474761 [TestContainsInterface_String] [rapid] draw sub: "a"
+# 2026/04/22 14:30:37.474762 [TestContainsInterface_String] ContainsInterface result mismatch
+# 
+v0.4.8#15404216727698764078
+0x5555555555555
+0x0
+0x0
+0x0
+0x0
+0x5555555555555
+0x0
+0x0
+0x1
+0x0

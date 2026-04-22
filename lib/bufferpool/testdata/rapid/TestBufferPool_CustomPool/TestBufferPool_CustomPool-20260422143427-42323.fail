@@ -1,0 +1,14 @@
+# 2026/04/22 14:34:27.012872 [TestBufferPool_CustomPool] [rapid] draw defaultSize: 0x40
+# 2026/04/22 14:34:27.012877 [TestBufferPool_CustomPool] [rapid] draw localCacheNum: 1
+# 2026/04/22 14:34:27.012879 [TestBufferPool_CustomPool] [rapid] draw size: 1
+# 2026/04/22 14:34:27.012880 [TestBufferPool_CustomPool] Buffer capacity 0 less than minimum expected
+# 
+v0.4.8#8172551037885700820
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
