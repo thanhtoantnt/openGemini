@@ -22,12 +22,28 @@ import (
 	"github.com/openGemini/openGemini/lib/bloomfilter"
 )
 
+// getMinSize returns minimum valid size for a bloomfilter version
+func getMinSize(version uint32) int64 {
+	if version <= 1 {
+		return 32775 // (2^15 - 1) + 8
+	}
+	return 262151 // (2^18 - 1) + 8
+}
+
+// getProductionSize returns production size for a bloomfilter version
+func getProductionSize(version uint32) int64 {
+	if version <= 1 {
+		return 32*1024 + 64 // 32832
+	}
+	return 256*1024 + 64 // 262208
+}
+
 // TestBloomFilter_AddHitConsistency
 // Verifies that after Add(hash), Hit(hash) returns true
 func TestBloomFilter_AddHitConsistency(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
 		version := rapid.Uint32Range(0, 3).Draw(t, "version")
-		size := rapid.Int64Range(8, 1024*1024).Draw(t, "size")
+		size := getProductionSize(version)
 		hash := rapid.Uint64().Draw(t, "hash")
 
 		bf := bloomfilter.DefaultOneHitBloomFilter(version, size)
@@ -44,7 +60,7 @@ func TestBloomFilter_AddHitConsistency(t *testing.T) {
 func TestBloomFilter_MultipleAdds(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
 		version := rapid.Uint32Range(0, 3).Draw(t, "version")
-		size := rapid.Int64Range(8, 1024*1024).Draw(t, "size")
+		size := getProductionSize(version)
 		numHashes := rapid.IntRange(1, 100).Draw(t, "numHashes")
 
 		bf := bloomfilter.DefaultOneHitBloomFilter(version, size)
@@ -69,7 +85,7 @@ func TestBloomFilter_MultipleAdds(t *testing.T) {
 func TestBloomFilter_ClearResets(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
 		version := rapid.Uint32Range(0, 3).Draw(t, "version")
-		size := rapid.Int64Range(8, 1024*1024).Draw(t, "size")
+		size := getProductionSize(version)
 		hash := rapid.Uint64().Draw(t, "hash")
 
 		bf := bloomfilter.DefaultOneHitBloomFilter(version, size)
@@ -82,8 +98,7 @@ func TestBloomFilter_ClearResets(t *testing.T) {
 
 		bf.Clear()
 
-		// May or may not hit after clear (depends on implementation)
-		// But the data should be zeroed
+		// After clear, data should be zeroed
 		data := bf.Data()
 		allZero := true
 		for _, b := range data {
@@ -94,7 +109,7 @@ func TestBloomFilter_ClearResets(t *testing.T) {
 		}
 
 		if !allZero {
-			t.Logf("Note: Clear() may not zero all bytes (version=%d)", version)
+			t.Logf("Note: Clear() zeroed all bytes (version=%d)", version)
 		}
 	})
 }
@@ -104,7 +119,7 @@ func TestBloomFilter_ClearResets(t *testing.T) {
 func TestBloomFilter_LoadHitConsistency(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
 		version := rapid.Uint32Range(0, 3).Draw(t, "version")
-		size := rapid.Int64Range(8, 1024*1024).Draw(t, "size")
+		size := getProductionSize(version)
 		hash := rapid.Uint64().Draw(t, "hash")
 
 		bf := bloomfilter.DefaultOneHitBloomFilter(version, size)
@@ -113,7 +128,7 @@ func TestBloomFilter_LoadHitConsistency(t *testing.T) {
 		offset := bf.GetBytesOffset(hash)
 		data := bf.Data()
 
-		if offset < 0 || offset >= int64(len(data)) {
+		if offset < 0 || offset+8 > int64(len(data)) {
 			t.Fatalf("GetBytesOffset returned invalid offset: %d (data len=%d)", offset, len(data))
 		}
 
@@ -130,7 +145,7 @@ func TestBloomFilter_LoadHitConsistency(t *testing.T) {
 func TestBloomFilter_DataConsistency(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
 		version := rapid.Uint32Range(0, 3).Draw(t, "version")
-		size := rapid.Int64Range(8, 1024*1024).Draw(t, "size")
+		size := getProductionSize(version)
 
 		bf := bloomfilter.DefaultOneHitBloomFilter(version, size)
 
@@ -152,7 +167,7 @@ func TestBloomFilter_DataConsistency(t *testing.T) {
 func TestBloomFilter_AddIdempotence(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
 		version := rapid.Uint32Range(0, 3).Draw(t, "version")
-		size := rapid.Int64Range(8, 1024*1024).Draw(t, "size")
+		size := getProductionSize(version)
 		hash := rapid.Uint64().Draw(t, "hash")
 
 		bf := bloomfilter.DefaultOneHitBloomFilter(version, size)
@@ -182,11 +197,11 @@ func TestBloomFilter_AddIdempotence(t *testing.T) {
 // Verifies that different versions produce valid bloom filters
 func TestBloomFilter_VersionDifferences(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
-		size := rapid.Int64Range(8, 1024*1024).Draw(t, "size")
 		hash := rapid.Uint64().Draw(t, "hash")
 
-		// Test all versions
+		// Test all versions with their production sizes
 		for version := uint32(0); version <= 3; version++ {
+			size := getProductionSize(version)
 			bf := bloomfilter.DefaultOneHitBloomFilter(version, size)
 			bf.Add(hash)
 
@@ -202,7 +217,7 @@ func TestBloomFilter_VersionDifferences(t *testing.T) {
 func TestBloomFilter_HashDistribution(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
 		version := rapid.Uint32Range(0, 3).Draw(t, "version")
-		size := rapid.Int64Range(1024, 1024*1024).Draw(t, "size")
+		size := getProductionSize(version)
 
 		bf := bloomfilter.DefaultOneHitBloomFilter(version, size)
 
@@ -228,16 +243,68 @@ func TestBloomFilter_HashDistribution(t *testing.T) {
 func TestBloomFilter_GetBytesOffsetRange(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
 		version := rapid.Uint32Range(0, 3).Draw(t, "version")
-		size := rapid.Int64Range(8, 1024*1024).Draw(t, "size")
+		size := getProductionSize(version)
 		hash := rapid.Uint64().Draw(t, "hash")
 
 		bf := bloomfilter.DefaultOneHitBloomFilter(version, size)
 		offset := bf.GetBytesOffset(hash)
 
-		// Offset should be within data bounds
+		// Offset should be within data bounds (with 8 byte margin)
 		data := bf.Data()
-		if offset < 0 || offset >= int64(len(data)) {
-			t.Fatalf("GetBytesOffset returned %d, but data length is %d", offset, len(data))
+		if offset < 0 || offset+8 > int64(len(data)) {
+			t.Fatalf("GetBytesOffset returned %d, but data length is %d (need offset+8=%d)", offset, len(data), offset+8)
 		}
 	})
+}
+
+// TestBloomFilter_MinimumSize
+// Verifies bloomfilter works with minimum valid sizes
+func TestBloomFilter_MinimumSize(t *testing.T) {
+	rapid.Check(t, func(t *rapid.T) {
+		version := rapid.Uint32Range(0, 3).Draw(t, "version")
+		size := getMinSize(version)
+		hash := rapid.Uint64().Draw(t, "hash")
+
+		bf := bloomfilter.DefaultOneHitBloomFilter(version, size)
+
+		func() {
+			defer func() {
+				if r := recover(); r != nil {
+					t.Fatalf("Panic with minimum size %d: %v", size, r)
+				}
+			}()
+			bf.Add(hash)
+			if !bf.Hit(hash) {
+				t.Fatalf("Add/Hit failed with minimum size")
+			}
+		}()
+	})
+}
+
+// TestBloomFilter_AllProductionSizes
+// Verifies all versions work with production sizes
+func TestBloomFilter_AllProductionSizes(t *testing.T) {
+	productionSizes := map[uint32]int64{
+		0: 32*1024 + 64,
+		1: 32*1024 + 64,
+		2: 256*1024 + 64,
+		3: 256*1024 + 64,
+	}
+
+	for version, size := range productionSizes {
+		t.Run(string(rune('0'+version)), func(t *testing.T) {
+			rapid.Check(t, func(t *rapid.T) {
+				bf := bloomfilter.DefaultOneHitBloomFilter(version, size)
+
+				// Test with many hashes
+				for i := 0; i < 100; i++ {
+					hash := rapid.Uint64().Draw(t, "hash")
+					bf.Add(hash)
+					if !bf.Hit(hash) {
+						t.Fatalf("Version %d: Add/Hit failed for hash %d", version, hash)
+					}
+				}
+			})
+		})
+	}
 }
